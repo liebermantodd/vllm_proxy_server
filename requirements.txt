@@ -5,4 +5,6 @@ urllib3
 requests
 ascii_colors
 fastapi
+uvicorn
+pydantic
 httpx[http2]
