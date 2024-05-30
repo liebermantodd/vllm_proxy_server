@@ -61,12 +61,8 @@ async def forward_request(path: str, method: str, headers: dict, body=None):
     async with httpx.AsyncClient(http2=True, limits=httpx.Limits(max_connections=200, max_keepalive_connections=50)) as client:
         if method == "GET":
             response = await client.get(url, headers=headers, stream=True)
-        elif method == "POST":
-            response = await client.post(url, headers=headers, json=body, stream=True)
-        elif method == "PUT":
-            response = await client.put(url, headers=headers, json=body, stream=True)
-        elif method == "DELETE":
-            response = await client.delete(url, headers=headers, stream=True)
+        elif method in ["POST", "PUT", "DELETE"]:
+            response = await client.request(method, url, headers=headers, json=body, stream=True)
         else:
             raise HTTPException(status_code=405, detail="Method not allowed")
 
@@ -93,6 +89,10 @@ async def proxy(request: Request, full_path: str):
             return Response(content='', status_code=response.status_code, media_type="text/plain")
     except json.decoder.JSONDecodeError:
         return Response(content=response.text, status_code=response.status_code, media_type="text/plain")
+
+    
+    
+    
 # Step 5: Background Task to Reload API Keys
 async def reload_api_keys_periodically():
     global api_keys, last_modified_time
