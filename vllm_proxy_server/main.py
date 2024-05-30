@@ -135,6 +135,8 @@ async def startup_event():
     ASCIIColors.success("Application started successfully!")
 
 # Step 7: Run the Proxy Server
-import uvicorn
-if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=args.port, workers=4, log_level="info")
+# import uvicorn
+# if __name__ == "__main__":
+#     uvicorn.run(app, host="0.0.0.0", port=args.port, workers=4, log_level="info")
+# run :
+# uvicorn main:app --host 0.0.0.0 --port 8000 --workers 4
