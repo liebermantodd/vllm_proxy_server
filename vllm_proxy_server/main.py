@@ -12,6 +12,7 @@ import aiofiles
 import time
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
+from asciicolors import ASCIIColors
 
 # Step 1: Setup argparse
 parser = argparse.ArgumentParser(description="Run a proxy server with authentication and logging.")
@@ -103,6 +104,14 @@ async def proxy(request: Request, full_path: str):
             return Response(content='', status_code=response.status_code, media_type="text/plain")
     except json.decoder.JSONDecodeError:
         return Response(content=response.text, status_code=response.status_code, media_type="text/plain")
+
+
+@app.on_event("startup")
+async def startup_event():
+    ASCIIColors.success("Starting up the FastAPI application...")
+    ASCIIColors.info("Loading configurations...")
+    ASCIIColors.warning("Ensure all dependencies are installed.")
+    ASCIIColors.success("Application started successfully!")
 
 # Step 7: Run the Proxy Server
 import uvicorn

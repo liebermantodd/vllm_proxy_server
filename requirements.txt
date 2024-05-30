@@ -8,3 +8,4 @@ fastapi
 uvicorn
 pydantic
 httpx[http2]
+watchdog
