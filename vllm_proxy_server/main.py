@@ -12,7 +12,7 @@ import aiofiles
 import time
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
-from asciicolors import ASCIIColors
+from ascii_colors import ASCIIColors
 
 # Step 1: Setup argparse
 parser = argparse.ArgumentParser(description="Run a proxy server with authentication and logging.")
