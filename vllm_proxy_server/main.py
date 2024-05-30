@@ -3,6 +3,7 @@ from fastapi import Request, HTTPException, Response
 from fastapi.responses import JSONResponse, StreamingResponse
 import httpx
 import asyncio
+import csv
 import datetime
 import argparse
 import json
@@ -30,9 +31,12 @@ last_modified_time = os.path.getmtime(args.api_keys_file)
 
 # Logging function
 async def log_request(username, ip_address, event, access):
-    async with aiofiles.open(args.log_file, "a") as logfile:
-        log_entry = f"{datetime.datetime.now()},{event},{username},{ip_address},{access}\n"
-        await logfile.write(log_entry)
+    file_exists = os.path.isfile(args.log_file)
+    async with aiofiles.open(args.log_file, "a", newline='') as csvfile:
+        log_writer = csv.writer(await csvfile)
+        if not file_exists or os.stat(args.log_file).st_size == 0:
+            log_writer.writerow(['time_stamp', 'event', 'user_name', 'ip_address', 'access'])
+        log_writer.writerow([datetime.datetime.now(), event, username, ip_address, access])
 
 # Step 3: Authentication Middleware
 @app.middleware("http")
@@ -60,43 +64,38 @@ async def forward_request(path: str, method: str, headers: dict, body=None):
     url = f"http://localhost:8000{path}"
     async with httpx.AsyncClient(http2=True, limits=httpx.Limits(max_connections=200, max_keepalive_connections=50)) as client:
         if method == "GET":
-            async with client.stream("GET", url, headers=headers) as response:
-                if "stream" in path:
-                    async def stream_response():
-                        async for chunk in response.aiter_bytes():
-                            yield chunk
-                    return StreamingResponse(stream_response(), media_type="text/event-stream")
-                content = await response.aread()
-                return Response(content=content, status_code=response.status_code, headers=dict(response.headers))
-        elif method in ["POST", "PUT", "DELETE"]:
-            async with client.stream(method, url, headers=headers, json=body) as response:
-                if "stream" in path:
-                    async def stream_response():
-                        async for chunk in response.aiter_bytes():
-                            yield chunk
-                    return StreamingResponse(stream_response(), media_type="text/event-stream")
-                content = await response.aread()
-                return Response(content=content, status_code=response.status_code, headers=dict(response.headers))
-        else:
-            raise HTTPException(status_code=405, detail="Method not allowed")
+            response = await client.get(url, headers=headers)
+        elif method == "POST":
+            response = await client.post(url, headers=headers, json=body)
+            
+        if "stream" in path:
+            async def stream_response():
+                async for chunk in response.aiter_bytes():
+                    yield chunk
+            return StreamingResponse(stream_response(), media_type="text/event-stream")
+        return response
 
 @app.api_route("/{full_path:path}", methods=["GET", "POST", "PUT", "DELETE"], include_in_schema=False)
 async def proxy(request: Request, full_path: str):
     method = request.method
     headers = dict(request.headers)
-    body = await request.json() if method in ["POST", "PUT"] and request.headers.get("Content-Type", "") == "application/json" else None
+    body = await request.json() if method == "POST" and request.headers.get("Content-Type", "") == "application/json" else None
     response = await forward_request(f"/{full_path}", method, headers, body)
     if isinstance(response, StreamingResponse):
         return response
     try:
-        content = await response.aread()
-        return JSONResponse(content=json.loads(content), status_code=response.status_code)
+        if response.content:
+            return JSONResponse(content=response.json(), status_code=response.status_code)
+        else:
+            return Response(content='', status_code=response.status_code, media_type="text/plain")
     except json.decoder.JSONDecodeError:
-        return Response(content=content, status_code=response.status_code, media_type="text/plain")
+        return Response(content=response.text, status_code=response.status_code, media_type="text/plain")
 
-    
-    
 # Step 5: Background Task to Reload API Keys
+@app.on_event("startup")
+async def start_background_tasks():
+    asyncio.create_task(reload_api_keys_periodically())
+
 async def reload_api_keys_periodically():
     global api_keys, last_modified_time
     while True:
@@ -106,15 +105,6 @@ async def reload_api_keys_periodically():
             last_modified_time = current_modified_time
             print("API keys reloaded.")
         await asyncio.sleep(10)  # Check every 10 seconds
-
-# Step 6: Lifespan Event Handlers
-@app.on_event("startup")
-async def startup_event():
-    asyncio.create_task(reload_api_keys_periodically())
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    print("Shutting down...")
 
 # Step 7: Run the Proxy Server
 import uvicorn
