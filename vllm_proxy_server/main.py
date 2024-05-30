@@ -3,7 +3,6 @@ from fastapi import Request, HTTPException, Response
 from fastapi.responses import JSONResponse, StreamingResponse
 import httpx
 import asyncio
-import csv
 import datetime
 import argparse
 import json
@@ -31,12 +30,9 @@ last_modified_time = os.path.getmtime(args.api_keys_file)
 
 # Logging function
 async def log_request(username, ip_address, event, access):
-    file_exists = os.path.isfile(args.log_file)
-    async with aiofiles.open(args.log_file, "a", newline='') as csvfile:
-        log_writer = csv.writer(await csvfile)
-        if not file_exists or os.stat(args.log_file).st_size == 0:
-            log_writer.writerow(['time_stamp', 'event', 'user_name', 'ip_address', 'access'])
-        log_writer.writerow([datetime.datetime.now(), event, username, ip_address, access])
+    async with aiofiles.open(args.log_file, "a") as logfile:
+        log_entry = f"{datetime.datetime.now()},{event},{username},{ip_address},{access}\n"
+        await logfile.write(log_entry)
 
 # Step 3: Authentication Middleware
 @app.middleware("http")
