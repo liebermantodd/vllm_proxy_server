@@ -85,11 +85,15 @@ async def forward_request(path: str, method: str, headers: dict, body=None):
     start_time = time.time()
     
     async with httpx.AsyncClient(http2=True, limits=httpx.Limits(max_connections=200, max_keepalive_connections=50)) as client:
+        request_start_time = time.time()
         if method == "GET":
             response = await client.get(url, headers=headers)
         elif method == "POST":
             response = await client.post(url, headers=headers, json=body)
-            
+        request_end_time = time.time()
+        
+        print(f"HTTP request time: {request_end_time - request_start_time} seconds")
+        
         if "stream" in path:
             async def stream_response():
                 async for chunk in response.aiter_bytes():
@@ -102,10 +106,17 @@ async def forward_request(path: str, method: str, headers: dict, body=None):
 
 @app.api_route("/{full_path:path}", methods=["GET", "POST", "PUT", "DELETE"], include_in_schema=False)
 async def proxy(request: Request, full_path: str):
+    print(f"Proxy function called with path: {full_path}")
     method = request.method
     headers = dict(request.headers)
     body = await request.json() if method == "POST" and request.headers.get("Content-Type", "") == "application/json" else None
+    
+    proxy_start_time = time.time()
     response = await forward_request(f"/{full_path}", method, headers, body)
+    proxy_end_time = time.time()
+    
+    print(f"Proxy function processing time: {proxy_end_time - proxy_start_time} seconds")
+    
     if isinstance(response, StreamingResponse):
         return response
     try:
