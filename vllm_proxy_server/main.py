@@ -60,19 +60,23 @@ async def forward_request(path: str, method: str, headers: dict, body=None):
     url = f"http://localhost:8000{path}"
     async with httpx.AsyncClient(http2=True, limits=httpx.Limits(max_connections=200, max_keepalive_connections=50)) as client:
         if method == "GET":
-            response = await client.stream("GET", url, headers=headers)
+            async with client.stream("GET", url, headers=headers) as response:
+                if "stream" in path:
+                    async def stream_response():
+                        async for chunk in response.aiter_bytes():
+                            yield chunk
+                    return StreamingResponse(stream_response(), media_type="text/event-stream")
+                return response
         elif method in ["POST", "PUT", "DELETE"]:
-            response = await client.stream(method, url, headers=headers, json=body)
+            async with client.stream(method, url, headers=headers, json=body) as response:
+                if "stream" in path:
+                    async def stream_response():
+                        async for chunk in response.aiter_bytes():
+                            yield chunk
+                    return StreamingResponse(stream_response(), media_type="text/event-stream")
+                return response
         else:
             raise HTTPException(status_code=405, detail="Method not allowed")
-
-        if "stream" in path:
-            async def stream_response():
-                async for chunk in response.aiter_bytes():
-                    yield chunk
-            return StreamingResponse(stream_response(), media_type="text/event-stream")
-        
-        return response
 
 @app.api_route("/{full_path:path}", methods=["GET", "POST", "PUT", "DELETE"], include_in_schema=False)
 async def proxy(request: Request, full_path: str):
@@ -89,7 +93,6 @@ async def proxy(request: Request, full_path: str):
             return Response(content='', status_code=response.status_code, media_type="text/plain")
     except json.decoder.JSONDecodeError:
         return Response(content=response.text, status_code=response.status_code, media_type="text/plain")
-
 
     
     
