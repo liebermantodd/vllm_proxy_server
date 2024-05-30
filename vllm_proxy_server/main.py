@@ -10,6 +10,8 @@ import json
 import os
 import aiofiles
 import time
+from watchdog.observers import Observer
+from watchdog.events import FileSystemEventHandler
 
 # Step 1: Setup argparse
 parser = argparse.ArgumentParser(description="Run a proxy server with authentication and logging.")
@@ -27,16 +29,27 @@ def load_api_keys(filename):
     return {key.split(":")[0]: key.split(":")[1] for key in keys}
 
 api_keys = load_api_keys(args.api_keys_file)
-last_modified_time = os.path.getmtime(args.api_keys_file)
+
+# Watchdog event handler for reloading API keys
+class ReloadAPIKeysHandler(FileSystemEventHandler):
+    def on_modified(self, event):
+        if event.src_path == args.api_keys_file:
+            global api_keys
+            api_keys = load_api_keys(args.api_keys_file)
+            print("API keys reloaded.")
+
+# Start the watchdog observer
+observer = Observer()
+observer.schedule(ReloadAPIKeysHandler(), path=os.path.dirname(args.api_keys_file), recursive=False)
+observer.start()
 
 # Logging function
 async def log_request(username, ip_address, event, access):
     file_exists = os.path.isfile(args.log_file)
-    async with aiofiles.open(args.log_file, "a", newline='') as csvfile:
-        log_writer = csv.writer(await csvfile)
+    async with aiofiles.open(args.log_file, "a") as csvfile:
         if not file_exists or os.stat(args.log_file).st_size == 0:
-            log_writer.writerow(['time_stamp', 'event', 'user_name', 'ip_address', 'access'])
-        log_writer.writerow([datetime.datetime.now(), event, username, ip_address, access])
+            await csvfile.write('time_stamp,event,user_name,ip_address,access\n')
+        await csvfile.write(f'{datetime.datetime.now()},{event},{username},{ip_address},{access}\n')
 
 # Step 3: Authentication Middleware
 @app.middleware("http")
@@ -90,21 +103,6 @@ async def proxy(request: Request, full_path: str):
             return Response(content='', status_code=response.status_code, media_type="text/plain")
     except json.decoder.JSONDecodeError:
         return Response(content=response.text, status_code=response.status_code, media_type="text/plain")
-
-# Step 5: Background Task to Reload API Keys
-@app.on_event("startup")
-async def start_background_tasks():
-    asyncio.create_task(reload_api_keys_periodically())
-
-async def reload_api_keys_periodically():
-    global api_keys, last_modified_time
-    while True:
-        current_modified_time = os.path.getmtime(args.api_keys_file)
-        if current_modified_time != last_modified_time:
-            api_keys = load_api_keys(args.api_keys_file)
-            last_modified_time = current_modified_time
-            print("API keys reloaded.")
-        await asyncio.sleep(10)  # Check every 10 seconds
 
 # Step 7: Run the Proxy Server
 import uvicorn
