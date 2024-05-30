@@ -138,12 +138,7 @@ async def proxy(request: Request, full_path: str):
         return Response(content=response.text, status_code=response.status_code, media_type="text/plain")
 
 
-def main():
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=args.port)
 # Step 7: Run the Proxy Server
-# import uvicorn
-# if __name__ == "__main__":
-#     uvicorn.run(app, host="0.0.0.0", port=args.port, workers=4, log_level="info")
-# run :
-# uvicorn main:app --host 0.0.0.0 --port 8000 --workers 4
+import uvicorn
+if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port=args.port)
