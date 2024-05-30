@@ -134,6 +134,9 @@ async def startup_event():
     ASCIIColors.warning("Ensure all dependencies are installed.")
     ASCIIColors.success("Application started successfully!")
 
+def main():
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=args.port)
 # Step 7: Run the Proxy Server
 # import uvicorn
 # if __name__ == "__main__":
