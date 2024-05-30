@@ -55,6 +55,9 @@ async def log_request(username, ip_address, event, access):
 # Step 3: Authentication Middleware
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
+    print(f"Received request: {request.url}")
+    start_time = time.time()
+    
     auth_header = request.headers.get("Authorization")
     if auth_header and auth_header.startswith("Bearer "):
         token = auth_header.split(" ")[1]
@@ -66,6 +69,8 @@ async def auth_middleware(request: Request, call_next):
         if username in api_keys and api_keys[username] == secret:
             response = await call_next(request)
             await log_request(username, request.client.host, "gen_request", "Authorized")
+            end_time = time.time()
+            print(f"Middleware processing time: {end_time - start_time} seconds")
             return response
         else:
             await log_request(username, request.client.host, "gen_request", "Denied")
@@ -76,6 +81,9 @@ async def auth_middleware(request: Request, call_next):
 # Step 4: Forward Requests
 async def forward_request(path: str, method: str, headers: dict, body=None):
     url = f"http://localhost:8000{path}"
+    print(f"Forwarding request to: {url}")
+    start_time = time.time()
+    
     async with httpx.AsyncClient(http2=True, limits=httpx.Limits(max_connections=200, max_keepalive_connections=50)) as client:
         if method == "GET":
             response = await client.get(url, headers=headers)
@@ -87,6 +95,9 @@ async def forward_request(path: str, method: str, headers: dict, body=None):
                 async for chunk in response.aiter_bytes():
                     yield chunk
             return StreamingResponse(stream_response(), media_type="text/event-stream")
+        
+        end_time = time.time()
+        print(f"Forward request processing time: {end_time - start_time} seconds")
         return response
 
 @app.api_route("/{full_path:path}", methods=["GET", "POST", "PUT", "DELETE"], include_in_schema=False)
@@ -104,7 +115,6 @@ async def proxy(request: Request, full_path: str):
             return Response(content='', status_code=response.status_code, media_type="text/plain")
     except json.decoder.JSONDecodeError:
         return Response(content=response.text, status_code=response.status_code, media_type="text/plain")
-
 
 @app.on_event("startup")
 async def startup_event():
