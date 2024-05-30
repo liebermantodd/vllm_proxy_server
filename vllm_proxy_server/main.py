@@ -8,7 +8,8 @@ import datetime
 import argparse
 import json
 import os
-
+import aiofiles
+import time
 
 # Step 1: Setup argparse
 parser = argparse.ArgumentParser(description="Run a proxy server with authentication and logging.")
@@ -26,23 +27,20 @@ def load_api_keys(filename):
     return {key.split(":")[0]: key.split(":")[1] for key in keys}
 
 api_keys = load_api_keys(args.api_keys_file)
+last_modified_time = os.path.getmtime(args.api_keys_file)
 
 # Logging function
 async def log_request(username, ip_address, event, access):
-    # Check if the file exists and is empty to add headers
     file_exists = os.path.isfile(args.log_file)
-    with open(args.log_file, "a", newline='') as csvfile:
-        log_writer = csv.writer(csvfile)
+    async with aiofiles.open(args.log_file, "a", newline='') as csvfile:
+        log_writer = csv.writer(await csvfile)
         if not file_exists or os.stat(args.log_file).st_size == 0:
-            # Write the headers if the file is new or empty
             log_writer.writerow(['time_stamp', 'event', 'user_name', 'ip_address', 'access'])
-        # Write the log entry
         log_writer.writerow([datetime.datetime.now(), event, username, ip_address, access])
 
 # Step 3: Authentication Middleware
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
-    print(f"auth_middleware {datetime.datetime.now()}")
     auth_header = request.headers.get("Authorization")
     if auth_header and auth_header.startswith("Bearer "):
         token = auth_header.split(" ")[1]
@@ -63,17 +61,13 @@ async def auth_middleware(request: Request, call_next):
 
 # Step 4: Forward Requests
 async def forward_request(path: str, method: str, headers: dict, body=None):
-    #print(f"forward_request {datetime.datetime.now()}")
     url = f"http://localhost:8000{path}"
-    async with httpx.AsyncClient(http2=True, limits=httpx.Limits(max_connections=100, max_keepalive_connections=20)) as client:
-        #print(f"the with started {datetime.datetime.now()}")
+    async with httpx.AsyncClient(http2=True, limits=httpx.Limits(max_connections=200, max_keepalive_connections=50)) as client:
         if method == "GET":
             response = await client.get(url, headers=headers)
         elif method == "POST":
             response = await client.post(url, headers=headers, json=body)
-        #print(f"response ok {datetime.datetime.now()}")
             
-        # Handle streaming mode
         if "stream" in path:
             async def stream_response():
                 async for chunk in response.aiter_bytes():
@@ -83,7 +77,6 @@ async def forward_request(path: str, method: str, headers: dict, body=None):
 
 @app.api_route("/{full_path:path}", methods=["GET", "POST", "PUT", "DELETE"], include_in_schema=False)
 async def proxy(request: Request, full_path: str):
-    # print(f"proxy {datetime.datetime.now()}")
     method = request.method
     headers = dict(request.headers)
     body = await request.json() if method == "POST" and request.headers.get("Content-Type", "") == "application/json" else None
@@ -91,15 +84,32 @@ async def proxy(request: Request, full_path: str):
     if isinstance(response, StreamingResponse):
         return response
     try:
-        # Attempt to parse the response as JSON only if the content is not empty
         if response.content:
             return JSONResponse(content=response.json(), status_code=response.status_code)
         else:
-            # If the response is empty, return a generic response or handle accordingly
             return Response(content='', status_code=response.status_code, media_type="text/plain")
     except json.decoder.JSONDecodeError:
-        # If the response cannot be parsed as JSON, return the raw response or handle accordingly
         return Response(content=response.text, status_code=response.status_code, media_type="text/plain")
+
+# Step 5: Background Task to Reload API Keys
+async def reload_api_keys_periodically():
+    global api_keys, last_modified_time
+    while True:
+        current_modified_time = os.path.getmtime(args.api_keys_file)
+        if current_modified_time != last_modified_time:
+            api_keys = load_api_keys(args.api_keys_file)
+            last_modified_time = current_modified_time
+            print("API keys reloaded.")
+        await asyncio.sleep(10)  # Check every 10 seconds
+
+# Step 6: Lifespan Event Handlers
+@app.on_event("startup")
+async def startup_event():
+    asyncio.create_task(reload_api_keys_periodically())
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    print("Shutting down...")
 
 # Step 7: Run the Proxy Server
 import uvicorn
