@@ -60,22 +60,29 @@ async def forward_request(path: str, method: str, headers: dict, body=None):
     url = f"http://localhost:8000{path}"
     async with httpx.AsyncClient(http2=True, limits=httpx.Limits(max_connections=200, max_keepalive_connections=50)) as client:
         if method == "GET":
-            response = await client.get(url, headers=headers)
+            response = await client.get(url, headers=headers, stream=True)
         elif method == "POST":
-            response = await client.post(url, headers=headers, json=body)
-            
+            response = await client.post(url, headers=headers, json=body, stream=True)
+        elif method == "PUT":
+            response = await client.put(url, headers=headers, json=body, stream=True)
+        elif method == "DELETE":
+            response = await client.delete(url, headers=headers, stream=True)
+        else:
+            raise HTTPException(status_code=405, detail="Method not allowed")
+
         if "stream" in path:
             async def stream_response():
                 async for chunk in response.aiter_bytes():
                     yield chunk
             return StreamingResponse(stream_response(), media_type="text/event-stream")
+        
         return response
 
 @app.api_route("/{full_path:path}", methods=["GET", "POST", "PUT", "DELETE"], include_in_schema=False)
 async def proxy(request: Request, full_path: str):
     method = request.method
     headers = dict(request.headers)
-    body = await request.json() if method == "POST" and request.headers.get("Content-Type", "") == "application/json" else None
+    body = await request.json() if method in ["POST", "PUT"] and request.headers.get("Content-Type", "") == "application/json" else None
     response = await forward_request(f"/{full_path}", method, headers, body)
     if isinstance(response, StreamingResponse):
         return response
@@ -86,7 +93,6 @@ async def proxy(request: Request, full_path: str):
             return Response(content='', status_code=response.status_code, media_type="text/plain")
     except json.decoder.JSONDecodeError:
         return Response(content=response.text, status_code=response.status_code, media_type="text/plain")
-
 # Step 5: Background Task to Reload API Keys
 async def reload_api_keys_periodically():
     global api_keys, last_modified_time
