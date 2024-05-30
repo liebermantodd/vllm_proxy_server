@@ -66,7 +66,8 @@ async def forward_request(path: str, method: str, headers: dict, body=None):
                         async for chunk in response.aiter_bytes():
                             yield chunk
                     return StreamingResponse(stream_response(), media_type="text/event-stream")
-                return response
+                content = await response.aread()
+                return Response(content=content, status_code=response.status_code, headers=dict(response.headers))
         elif method in ["POST", "PUT", "DELETE"]:
             async with client.stream(method, url, headers=headers, json=body) as response:
                 if "stream" in path:
@@ -74,7 +75,8 @@ async def forward_request(path: str, method: str, headers: dict, body=None):
                         async for chunk in response.aiter_bytes():
                             yield chunk
                     return StreamingResponse(stream_response(), media_type="text/event-stream")
-                return response
+                content = await response.aread()
+                return Response(content=content, status_code=response.status_code, headers=dict(response.headers))
         else:
             raise HTTPException(status_code=405, detail="Method not allowed")
 
@@ -94,7 +96,6 @@ async def proxy(request: Request, full_path: str):
     except json.decoder.JSONDecodeError:
         return Response(content=response.text, status_code=response.status_code, media_type="text/plain")
 
-    
     
     
 # Step 5: Background Task to Reload API Keys
