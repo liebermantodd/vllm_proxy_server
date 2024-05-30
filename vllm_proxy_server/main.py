@@ -89,12 +89,10 @@ async def proxy(request: Request, full_path: str):
     if isinstance(response, StreamingResponse):
         return response
     try:
-        if response.content:
-            return JSONResponse(content=response.json(), status_code=response.status_code)
-        else:
-            return Response(content='', status_code=response.status_code, media_type="text/plain")
+        content = await response.aread()
+        return JSONResponse(content=json.loads(content), status_code=response.status_code)
     except json.decoder.JSONDecodeError:
-        return Response(content=response.text, status_code=response.status_code, media_type="text/plain")
+        return Response(content=content, status_code=response.status_code, media_type="text/plain")
 
     
     
