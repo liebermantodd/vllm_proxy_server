@@ -1,3 +1,4 @@
+from contextlib import asynccontextmanager
 import fastapi
 from fastapi import Request, HTTPException, Response
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -21,7 +22,16 @@ parser.add_argument("--port", type=int, default=9600, help="Port number for the 
 parser.add_argument("--api-keys-file", default="api_keys.txt", help="Path to the authorized users list.")
 args = parser.parse_args()
 
-app = fastapi.FastAPI()
+@asynccontextmanager
+async def lifespan(app: fastapi.FastAPI):
+    ASCIIColors.success("Starting up the FastAPI application...")
+    ASCIIColors.info("Loading configurations...")
+    ASCIIColors.warning("Ensure all dependencies are installed.")
+    ASCIIColors.success("Application started successfully!")
+    yield
+    ASCIIColors.success("Shut down successfully!")
+
+app = fastapi.FastAPI(lifespan=lifespan)
 
 # Step 2: Load API Keys
 def load_api_keys(filename):
@@ -127,12 +137,6 @@ async def proxy(request: Request, full_path: str):
     except json.decoder.JSONDecodeError:
         return Response(content=response.text, status_code=response.status_code, media_type="text/plain")
 
-@app.on_event("startup")
-async def startup_event():
-    ASCIIColors.success("Starting up the FastAPI application...")
-    ASCIIColors.info("Loading configurations...")
-    ASCIIColors.warning("Ensure all dependencies are installed.")
-    ASCIIColors.success("Application started successfully!")
 
 def main():
     import uvicorn
