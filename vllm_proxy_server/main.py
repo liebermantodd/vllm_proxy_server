@@ -60,9 +60,9 @@ async def forward_request(path: str, method: str, headers: dict, body=None):
     url = f"http://localhost:8000{path}"
     async with httpx.AsyncClient(http2=True, limits=httpx.Limits(max_connections=200, max_keepalive_connections=50)) as client:
         if method == "GET":
-            response = await client.get(url, headers=headers, stream=True)
+            response = await client.stream("GET", url, headers=headers)
         elif method in ["POST", "PUT", "DELETE"]:
-            response = await client.request(method, url, headers=headers, json=body, stream=True)
+            response = await client.stream(method, url, headers=headers, json=body)
         else:
             raise HTTPException(status_code=405, detail="Method not allowed")
 
@@ -89,6 +89,7 @@ async def proxy(request: Request, full_path: str):
             return Response(content='', status_code=response.status_code, media_type="text/plain")
     except json.decoder.JSONDecodeError:
         return Response(content=response.text, status_code=response.status_code, media_type="text/plain")
+
 
     
     
