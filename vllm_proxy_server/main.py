@@ -15,20 +15,39 @@ from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 from ascii_colors import ASCIIColors
 import configparser
+import sys
+
+# Debug levels
+DEBUG_LEVEL = 0  # Default to errors only
+
+def debug(message, level=1, json_data=None):
+    if DEBUG_LEVEL >= level:
+        if json_data and DEBUG_LEVEL >= 2:
+            print(f"DEBUG: {message}")
+            print(json.dumps(json_data, indent=2))
+        elif level == 1:
+            print(f"DEBUG: {message}")
+    if level == 0:  # Always print errors
+        print(f"ERROR: {message}")
 
 # Step 1: Setup argparse and load config
 parser = argparse.ArgumentParser(description="Run a proxy server with authentication and logging.")
 parser.add_argument("--config", default="config.ini", help="Path to the configuration file.")
 parser.add_argument("--log-file", help="Path to the access log file.")
+parser.add_argument("--token-log-file", help="Path to the token usage log file.")
 parser.add_argument("--port", type=int, help="Port number for the server.")
 parser.add_argument("--api-keys-file", help="Path to the authorized users list.")
+parser.add_argument("--debug", type=int, choices=[0, 1, 2], default=0, help="Debug level: 0 (errors only), 1 (verbose), 2 (JSON)")
 args = parser.parse_args()
+
+DEBUG_LEVEL = args.debug
 
 config = configparser.ConfigParser()
 config.read(args.config)
 
 # Use config values, but allow command-line arguments to override
 log_file = args.log_file or config.get('Server', 'log_file', fallback='access_log.csv')
+token_log_file = args.token_log_file or config.get('Server', 'token_log_file', fallback='token_usage_log.csv')
 port = args.port or config.getint('Server', 'port', fallback=8000)
 api_keys_file = args.api_keys_file or config.get('Auth', 'api_keys_file', fallback='api_keys.txt')
 
@@ -57,25 +76,32 @@ class ReloadAPIKeysHandler(FileSystemEventHandler):
         if event.src_path == api_keys_file:
             global api_keys
             api_keys = load_api_keys(api_keys_file)
-            print("API keys reloaded.")
+            debug("API keys reloaded.")
 
 # Start the watchdog observer
 observer = Observer()
 observer.schedule(ReloadAPIKeysHandler(), path=os.path.dirname(api_keys_file), recursive=False)
 observer.start()
 
-# Logging function
-async def log_request(username, ip_address, event, access):
+# Logging functions
+async def log_request(username, ip_address, event, access, model=None, chat_id=None, user_agent=None):
     file_exists = os.path.isfile(log_file)
     async with aiofiles.open(log_file, "a") as csvfile:
         if not file_exists or os.stat(log_file).st_size == 0:
-            await csvfile.write('time_stamp,event,user_name,ip_address,access\n')
-        await csvfile.write(f'{datetime.datetime.now()},{event},{username},{ip_address},{access}\n')
+            await csvfile.write('time_stamp,event,user_name,ip_address,access,model,chat_id,user_agent\n')
+        await csvfile.write(f'{datetime.datetime.now()},{event},{username},{ip_address},{access},{model or "N/A"},{chat_id or "N/A"},{user_agent or "N/A"}\n')
+
+async def log_token_usage(username, ip_address, prompt_tokens, completion_tokens, total_tokens, model=None, chat_id=None, user_agent=None):
+    file_exists = os.path.isfile(token_log_file)
+    async with aiofiles.open(token_log_file, "a") as csvfile:
+        if not file_exists or os.stat(token_log_file).st_size == 0:
+            await csvfile.write('time_stamp,user_name,ip_address,prompt_tokens,completion_tokens,total_tokens,model,chat_id,user_agent\n')
+        await csvfile.write(f'{datetime.datetime.now()},{username},{ip_address},{prompt_tokens},{completion_tokens},{total_tokens},{model or "N/A"},{chat_id or "N/A"},{user_agent or "N/A"}\n')
 
 # Step 3: Authentication Middleware
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
-    print(f"Received request: {request.url}")
+    debug(f"Received request: {request.url}")
     start_time = time.time()
     
     auth_header = request.headers.get("Authorization")
@@ -83,20 +109,21 @@ async def auth_middleware(request: Request, call_next):
         token = auth_header.split(" ")[1]
         token_parts = token.split(":")
         if len(token_parts) != 2:
-            await log_request("unknown", request.client.host, "gen_request", "Denied")
+            await log_request("unknown", request.client.host, "gen_request", "Denied", user_agent=request.headers.get("User-Agent"))
             raise HTTPException(status_code=401, detail="Invalid key format. Expected username:secret.")
         username, secret = token_parts
         if username in api_keys and api_keys[username] == secret:
-            print(f"Debug: Authenticated user: {username}")  # Debug print
+            debug(f"Authenticated user: {username}")
+            request.state.username = username  # Store username in request state
             response = await call_next(request)
-            await log_request(username, request.client.host, "gen_request", "Authorized")
+            await log_request(username, request.client.host, "gen_request", "Authorized", user_agent=request.headers.get("User-Agent"))
             end_time = time.time()
-            print(f"Middleware processing time: {end_time - start_time} seconds")
+            debug(f"Middleware processing time: {end_time - start_time} seconds")
             return response
         else:
-            await log_request(username, request.client.host, "gen_request", "Denied")
+            await log_request(username, request.client.host, "gen_request", "Denied", user_agent=request.headers.get("User-Agent"))
             raise HTTPException(status_code=401, detail="Invalid key")
-    await log_request("unknown", request.client.host, "gen_request", "Denied")
+    await log_request("unknown", request.client.host, "gen_request", "Denied", user_agent=request.headers.get("User-Agent"))
     raise HTTPException(status_code=401, detail="Unauthorized")
 
 # Step 4: Forward Requests
@@ -135,13 +162,13 @@ async def forward_request(path: str, method: str, headers: dict, body=None):
         new_headers["Authorization"] = f"Bearer {server_api_key}"
     
     # Debug output
-    print(f"Debug: Model requested: {model}")
-    print(f"Debug: Server URL selected: {server_url}")
-    print(f"Debug: Server API Key: {server_api_key}")
-    print(f"Debug: Final URL: {url}")
-    print(f"Debug: Original Headers: {headers}")
-    print(f"Debug: New Headers: {new_headers}")
-    print(f"Forwarding request to: {url}")
+    debug(f"Model requested: {model}")
+    debug(f"Server URL selected: {server_url}")
+    debug(f"Server API Key: {server_api_key}")
+    debug(f"Final URL: {url}")
+    debug(f"Original Headers: {headers}")
+    debug(f"New Headers: {new_headers}")
+    debug(f"Forwarding request to: {url}")
     start_time = time.time()
 
     async with httpx.AsyncClient(http2=True, limits=httpx.Limits(max_connections=200, max_keepalive_connections=50)) as client:
@@ -154,14 +181,17 @@ async def forward_request(path: str, method: str, headers: dict, body=None):
             else:
                 raise HTTPException(status_code=405, detail="Method not allowed")
         except httpx.RequestError as exc:
-            print(f"An error occurred while requesting {exc.request.url!r}.")
+            debug(f"An error occurred while requesting {exc.request.url!r}.", level=0)
             raise HTTPException(status_code=500, detail=str(exc))
         
         request_end_time = time.time()
         
-        print(f"HTTP request time: {request_end_time - request_start_time} seconds")
-        print(f"Response status code: {response.status_code}")
-        print(f"Response headers: {response.headers}")
+        debug(f"HTTP request time: {request_end_time - request_start_time} seconds")
+        debug(f"Response status code: {response.status_code}")
+        debug(f"Response headers: {response.headers}")
+        
+        # Debug: Print the response content
+        debug(f"Response content: {response.text}", level=2)
         
         if "stream" in path:
             async def stream_response():
@@ -170,12 +200,12 @@ async def forward_request(path: str, method: str, headers: dict, body=None):
             return StreamingResponse(stream_response(), media_type="text/event-stream")
         
         end_time = time.time()
-        print(f"Forward request processing time: {end_time - start_time} seconds")
+        debug(f"Forward request processing time: {end_time - start_time} seconds")
         return response
 
 @app.api_route("/{full_path:path}", methods=["GET", "POST", "PUT", "DELETE"], include_in_schema=False)
 async def proxy(request: Request, full_path: str):
-    print(f"Proxy function called with path: {full_path}")
+    debug(f"Proxy function called with path: {full_path}")
     method = request.method
     headers = dict(request.headers)
     body = await request.json() if method == "POST" and request.headers.get("Content-Type", "") == "application/json" else None
@@ -184,16 +214,38 @@ async def proxy(request: Request, full_path: str):
     response = await forward_request(f"/{full_path}", method, headers, body)
     proxy_end_time = time.time()
     
-    print(f"Proxy function processing time: {proxy_end_time - proxy_start_time} seconds")
+    debug(f"Proxy function processing time: {proxy_end_time - proxy_start_time} seconds")
     
     if isinstance(response, StreamingResponse):
         return response
     try:
         if response.content:
-            return JSONResponse(content=response.json(), status_code=response.status_code)
+            content = response.json()
+            debug("Parsed JSON response:", level=2, json_data=content)
+            # Log token usage if available
+            if 'usage' in content:
+                usage = content['usage']
+                prompt_tokens = usage.get('prompt_tokens', 0)
+                completion_tokens = usage.get('completion_tokens', 0)
+                total_tokens = usage.get('total_tokens', 0)
+                model = content.get('model', 'N/A')
+                chat_id = content.get('id', 'N/A')
+                debug(f"Token usage - Prompt: {prompt_tokens}, Completion: {completion_tokens}, Total: {total_tokens}")
+                await log_token_usage(
+                    request.state.username,
+                    request.client.host,
+                    prompt_tokens,
+                    completion_tokens,
+                    total_tokens,
+                    model=model,
+                    chat_id=chat_id,
+                    user_agent=request.headers.get("User-Agent")
+                )
+            return JSONResponse(content=content, status_code=response.status_code)
         else:
             return Response(content='', status_code=response.status_code, media_type="text/plain")
     except json.decoder.JSONDecodeError:
+        debug(f"Failed to parse JSON. Raw response: {response.text}", level=0)
         return Response(content=response.text, status_code=response.status_code, media_type="text/plain")
 
 

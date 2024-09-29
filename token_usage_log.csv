@@ -1,0 +1,6 @@
+time_stamp,user_name,ip_address,prompt_tokens,completion_tokens,total_tokens,model,chat_id,user_agent
+2024-09-29 03:22:17.698266,toddl,38.29.145.42,34,40,74,Qwen/Qwen2.5-72B-Instruct-GPTQ-Int4,chat-9bd12e8446ba420ba6ed6812056a8169,python-httpx/0.27.2
+2024-09-29 03:23:03.317260,toddl,38.29.145.42,39,128,167,meta-llama/Meta-Llama-3-8B-Instruct,chat-183f2615bcf84d088b5cf796ccb79758,python-httpx/0.27.2
+2024-09-29 03:40:34.724074,toddl,38.29.145.42,34,40,74,Qwen/Qwen2.5-72B-Instruct-GPTQ-Int4,chat-c1959788d4744f1fb43a673a1573a844,python-httpx/0.27.2
+2024-09-29 03:40:43.163285,toddl,38.29.145.42,36,55,91,meta-llama/Meta-Llama-3-8B-Instruct,chat-8a841073888f407791ee562584d80dc0,python-httpx/0.27.2
+2024-09-29 03:40:58.395575,toddl,38.29.145.42,36,64,100,meta-llama/Meta-Llama-3-8B-Instruct,chat-a85d29b887184459902dd1a63f270936,python-httpx/0.27.2
