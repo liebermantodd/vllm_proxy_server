@@ -87,6 +87,7 @@ async def auth_middleware(request: Request, call_next):
             raise HTTPException(status_code=401, detail="Invalid key format. Expected username:secret.")
         username, secret = token_parts
         if username in api_keys and api_keys[username] == secret:
+            print(f"Debug: Authenticated user: {username}")  # Debug print
             response = await call_next(request)
             await log_request(username, request.client.host, "gen_request", "Authorized")
             end_time = time.time()
@@ -107,56 +108,60 @@ async def forward_request(path: str, method: str, headers: dict, body=None):
             model = param.split('=')[1]
             break
     
+    if model is None and body and isinstance(body, dict):
+        model = body.get('model')
+    
     server_url = None
+    server_api_key = None
     for section in config.sections():
-        if section.startswith('Server_'):
+        if section.startswith('Server_') or section == 'DefaultServer' or section == 'SecondaryServer':
             if config[section].get('model') == model:
                 server_url = config[section]['url']
+                server_api_key = config[section].get('api-key')
                 break
     
     if server_url is None:
         # Fallback to default server if no match is found
         server_url = config['DefaultServer']['url']
+        server_api_key = config['DefaultServer'].get('api-key')
     
     url = f"{server_url}{path}"
+    
+    # Set up new headers for the server request
+    new_headers = {
+        "Content-Type": "application/json",
+    }
+    if server_api_key:
+        new_headers["Authorization"] = f"Bearer {server_api_key}"
     
     # Debug output
     print(f"Debug: Model requested: {model}")
     print(f"Debug: Server URL selected: {server_url}")
+    print(f"Debug: Server API Key: {server_api_key}")
     print(f"Debug: Final URL: {url}")
+    print(f"Debug: Original Headers: {headers}")
+    print(f"Debug: New Headers: {new_headers}")
     print(f"Forwarding request to: {url}")
     start_time = time.time()
-    # Import ConfigParser at the top of the file if not already imported
-    from configparser import ConfigParser
 
-    # Load the configuration file
-    config = ConfigParser()
-    config.read('config.ini')  # Make sure this path is correct
-
-    # Get the default server URL
-    default_server_url = config['DefaultServer']['url']
-
-    # Initialize server_url with the default
-    server_url = default_server_url
-
-    # Check if a specific model is requested
-    if model:
-        for section in config.sections():
-            if section.startswith('Server_'):
-                if config[section].get('model') == model:
-                    server_url = config[section]['url']
-                    break
-
-    url = f"{server_url}/{path}"
     async with httpx.AsyncClient(http2=True, limits=httpx.Limits(max_connections=200, max_keepalive_connections=50)) as client:
         request_start_time = time.time()
-        if method == "GET":
-            response = await client.get(url, headers=headers)
-        elif method == "POST":
-            response = await client.post(url, headers=headers, json=body)
+        try:
+            if method == "GET":
+                response = await client.get(url, headers=new_headers)
+            elif method == "POST":
+                response = await client.post(url, headers=new_headers, json=body)
+            else:
+                raise HTTPException(status_code=405, detail="Method not allowed")
+        except httpx.RequestError as exc:
+            print(f"An error occurred while requesting {exc.request.url!r}.")
+            raise HTTPException(status_code=500, detail=str(exc))
+        
         request_end_time = time.time()
         
         print(f"HTTP request time: {request_end_time - request_start_time} seconds")
+        print(f"Response status code: {response.status_code}")
+        print(f"Response headers: {response.headers}")
         
         if "stream" in path:
             async def stream_response():
