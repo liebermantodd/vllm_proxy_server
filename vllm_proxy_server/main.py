@@ -212,9 +212,7 @@ async def list_models():
         if section.startswith('Server_') or section == 'DefaultServer' or section == 'SecondaryServer':
             if 'model' in config[section]:
                 model_info = {
-                    'name': config[section]['model'],
-                    'server': section,
-                    'url': config[section]['url']
+                    'name': config[section]['model']
                 }
                 if 'api-key' in config[section]:
                     model_info['has_api_key'] = True
