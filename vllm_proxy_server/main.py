@@ -16,6 +16,7 @@ from watchdog.events import FileSystemEventHandler
 from ascii_colors import ASCIIColors
 import configparser
 import sys
+import uvicorn
 
 # Debug levels
 DEBUG_LEVEL = 0  # Default to errors only
@@ -103,6 +104,11 @@ async def log_token_usage(username, ip_address, prompt_tokens, completion_tokens
 async def auth_middleware(request: Request, call_next):
     debug(f"Received request: {request.url}")
     start_time = time.time()
+    
+    # Allow unauthenticated access to /models and FastAPI docs endpoints
+    if request.url.path in ["/models", "/docs", "/openapi.json", "/favicon.ico"]:
+        debug(f"Allowing unauthenticated access to {request.url.path}")
+        return await call_next(request)
     
     auth_header = request.headers.get("Authorization")
     if auth_header and auth_header.startswith("Bearer "):
@@ -203,6 +209,30 @@ async def forward_request(path: str, method: str, headers: dict, body=None):
         debug(f"Forward request processing time: {end_time - start_time} seconds")
         return response
 
+# Step 5: Enhanced /models endpoint
+@app.get("/models")
+async def list_models():
+    models = []
+    for section in config.sections():
+        if section.startswith('Server_') or section == 'DefaultServer' or section == 'SecondaryServer':
+            if 'model' in config[section]:
+                model_info = {
+                    'name': config[section]['model'],
+                    'server': section,
+                    'url': config[section]['url']
+                }
+                if 'api-key' in config[section]:
+                    model_info['has_api_key'] = True
+                else:
+                    model_info['has_api_key'] = False
+                models.append(model_info)
+    
+    return JSONResponse(content={
+        "model_count": len(models),
+        "models": models
+    })
+
+# Step 6: Main proxy route
 @app.api_route("/{full_path:path}", methods=["GET", "POST", "PUT", "DELETE"], include_in_schema=False)
 async def proxy(request: Request, full_path: str):
     debug(f"Proxy function called with path: {full_path}")
@@ -248,8 +278,6 @@ async def proxy(request: Request, full_path: str):
         debug(f"Failed to parse JSON. Raw response: {response.text}", level=0)
         return Response(content=response.text, status_code=response.status_code, media_type="text/plain")
 
-
 # Step 7: Run the Proxy Server
-import uvicorn
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=port)
