@@ -14,13 +14,23 @@ import time
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 from ascii_colors import ASCIIColors
+import configparser
 
-# Step 1: Setup argparse
+# Step 1: Setup argparse and load config
 parser = argparse.ArgumentParser(description="Run a proxy server with authentication and logging.")
-parser.add_argument("--log-file", default="access_log.csv", help="Path to the access log file.")
-parser.add_argument("--port", type=int, default=9600, help="Port number for the server.")
-parser.add_argument("--api-keys-file", default="api_keys.txt", help="Path to the authorized users list.")
+parser.add_argument("--config", default="config.ini", help="Path to the configuration file.")
+parser.add_argument("--log-file", help="Path to the access log file.")
+parser.add_argument("--port", type=int, help="Port number for the server.")
+parser.add_argument("--api-keys-file", help="Path to the authorized users list.")
 args = parser.parse_args()
+
+config = configparser.ConfigParser()
+config.read(args.config)
+
+# Use config values, but allow command-line arguments to override
+log_file = args.log_file or config.get('Server', 'log_file', fallback='access_log.csv')
+port = args.port or config.getint('Server', 'port', fallback=8000)
+api_keys_file = args.api_keys_file or config.get('Auth', 'api_keys_file', fallback='api_keys.txt')
 
 @asynccontextmanager
 async def lifespan(app: fastapi.FastAPI):
@@ -39,26 +49,26 @@ def load_api_keys(filename):
         keys = file.read().splitlines()
     return {key.split(":")[0]: key.split(":")[1] for key in keys}
 
-api_keys = load_api_keys(args.api_keys_file)
+api_keys = load_api_keys(api_keys_file)
 
 # Watchdog event handler for reloading API keys
 class ReloadAPIKeysHandler(FileSystemEventHandler):
     def on_modified(self, event):
-        if event.src_path == args.api_keys_file:
+        if event.src_path == api_keys_file:
             global api_keys
-            api_keys = load_api_keys(args.api_keys_file)
+            api_keys = load_api_keys(api_keys_file)
             print("API keys reloaded.")
 
 # Start the watchdog observer
 observer = Observer()
-observer.schedule(ReloadAPIKeysHandler(), path=os.path.dirname(args.api_keys_file), recursive=False)
+observer.schedule(ReloadAPIKeysHandler(), path=os.path.dirname(api_keys_file), recursive=False)
 observer.start()
 
 # Logging function
 async def log_request(username, ip_address, event, access):
-    file_exists = os.path.isfile(args.log_file)
-    async with aiofiles.open(args.log_file, "a") as csvfile:
-        if not file_exists or os.stat(args.log_file).st_size == 0:
+    file_exists = os.path.isfile(log_file)
+    async with aiofiles.open(log_file, "a") as csvfile:
+        if not file_exists or os.stat(log_file).st_size == 0:
             await csvfile.write('time_stamp,event,user_name,ip_address,access\n')
         await csvfile.write(f'{datetime.datetime.now()},{event},{username},{ip_address},{access}\n')
 
@@ -90,10 +100,54 @@ async def auth_middleware(request: Request, call_next):
 
 # Step 4: Forward Requests
 async def forward_request(path: str, method: str, headers: dict, body=None):
-    url = f"http://localhost:8000{path}"
+    # Determine the appropriate server based on the requested model
+    model = None
+    for param in path.split('&'):
+        if param.startswith('model='):
+            model = param.split('=')[1]
+            break
+    
+    server_url = None
+    for section in config.sections():
+        if section.startswith('Server_'):
+            if config[section].get('model') == model:
+                server_url = config[section]['url']
+                break
+    
+    if server_url is None:
+        # Fallback to default server if no match is found
+        server_url = config['DefaultServer']['url']
+    
+    url = f"{server_url}{path}"
+    
+    # Debug output
+    print(f"Debug: Model requested: {model}")
+    print(f"Debug: Server URL selected: {server_url}")
+    print(f"Debug: Final URL: {url}")
     print(f"Forwarding request to: {url}")
     start_time = time.time()
-    
+    # Import ConfigParser at the top of the file if not already imported
+    from configparser import ConfigParser
+
+    # Load the configuration file
+    config = ConfigParser()
+    config.read('config.ini')  # Make sure this path is correct
+
+    # Get the default server URL
+    default_server_url = config['DefaultServer']['url']
+
+    # Initialize server_url with the default
+    server_url = default_server_url
+
+    # Check if a specific model is requested
+    if model:
+        for section in config.sections():
+            if section.startswith('Server_'):
+                if config[section].get('model') == model:
+                    server_url = config[section]['url']
+                    break
+
+    url = f"{server_url}/{path}"
     async with httpx.AsyncClient(http2=True, limits=httpx.Limits(max_connections=200, max_keepalive_connections=50)) as client:
         request_start_time = time.time()
         if method == "GET":
@@ -141,4 +195,4 @@ async def proxy(request: Request, full_path: str):
 # Step 7: Run the Proxy Server
 import uvicorn
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=args.port)
+    uvicorn.run(app, host="0.0.0.0", port=port)
