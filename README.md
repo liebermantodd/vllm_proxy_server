@@ -55,7 +55,9 @@ vllm_proxy_add_user --users_list [path to the authorized `authorized_users.txt` 
 Start the vLLM Proxy Server by running the following command in your terminal:
 ```bash
 vllm_proxy_server --config [configuration file path] --users_list [users list file path] --port [port number to access the proxy]
- python vllm_proxy_server/main.py --api-keys-file ~/vllm_proxy_server/config/api_keys.txt --log-file llmproxy.log --port 8000v
+
+## Develpment Server Testing
+python vllm_proxy_server/main.py --api-keys-file ~/vllm_proxy_server/config/api_keys.txt --log-file llmproxy.log --port 8000
 ```
 The server will listen on port 808x, with x being the number of available ports starting from 0 (e.g., 8080, 8081, etc.). The first available port will be automatically selected if no other instance is running.
 
