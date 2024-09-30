@@ -30,7 +30,7 @@ logging.basicConfig(level=logging.ERROR, format='%(asctime)s - %(levelname)s - %
 logger = logging.getLogger(__name__)
 
 # Debug levels
-DEBUG_LEVEL = 0  # Default to errors only
+DEBUG_LEVEL = 2  # Default to errors only
 
 def debug(message, level=1, json_data=None):
     if DEBUG_LEVEL >= level:
@@ -110,16 +110,6 @@ async def log_request(username, ip_address, event, access, model=None, chat_id=N
         debug(f"Error logging request: {str(e)}", level=0)
         debug(traceback.format_exc(), level=0)
 
-async def log_token_usage(username, ip_address, prompt_tokens, completion_tokens, total_tokens, model=None, chat_id=None, user_agent=None):
-    try:
-        debug(f"Logging token usage: {username}, {ip_address}, {prompt_tokens}, {completion_tokens}, {total_tokens}", level=1)
-        async with aiofiles.open(token_log_file, "a") as csvfile:
-            await csvfile.write(f'{datetime.datetime.now()},{username},{ip_address},{prompt_tokens},{completion_tokens},{total_tokens}\n')
-        debug("Token usage logged successfully", level=1)
-    except Exception as e:
-        debug(f"Error logging token usage: {str(e)}", level=0)
-        debug(traceback.format_exc(), level=0)
-
 # Step 3: Authentication Middleware
 class AuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
@@ -166,8 +156,12 @@ async def forward_request(path: str, method: str, headers: dict, body=None):
             model = param.split('=')[1]
             break
     
-    if model is None and body and isinstance(body, dict):
-        model = body.get('model')
+    if model is None and body:
+        try:
+            body_json = json.loads(body)
+            model = body_json.get('model')
+        except json.JSONDecodeError:
+            debug("Failed to parse request body as JSON", level=0)
     
     server_url = None
     server_api_key = None
@@ -201,7 +195,7 @@ async def forward_request(path: str, method: str, headers: dict, body=None):
             if method == "GET":
                 response = await client.get(url, headers=new_headers)
             elif method == "POST":
-                response = await client.post(url, headers=new_headers, json=body)
+                response = await client.post(url, headers=new_headers, content=body)
             else:
                 raise HTTPException(status_code=405, detail="Method not allowed")
             
@@ -209,13 +203,7 @@ async def forward_request(path: str, method: str, headers: dict, body=None):
             content = await response.aread()
             
             debug(f"Response status code: {response.status_code}", level=1)
-            
-            # Check if the response is valid JSON
-            try:
-                json.loads(content)
-            except json.JSONDecodeError:
-                debug(f"Invalid JSON response: {content.decode()}", level=0)
-                raise HTTPException(status_code=500, detail="Invalid JSON response from server")
+            debug(f"Response content: {content.decode()}", level=2)
             
             return Response(content=content, status_code=response.status_code, headers=dict(response.headers))
         
@@ -262,45 +250,26 @@ async def proxy(request: Request, full_path: str):
     debug(f"Proxy function called with path: {full_path}", level=1)
     method = request.method
     headers = dict(request.headers)
-    body = await request.json() if method == "POST" and request.headers.get("Content-Type", "") == "application/json" else None
+    body = await request.body()
     
-    proxy_start_time = time.time()
+    # Log easily accessible data
+    client_ip = request.client.host
+    user_agent = headers.get("User-Agent", "Unknown")
+    timestamp = datetime.datetime.now().isoformat()
+    
+    debug(f"Request - IP: {client_ip}, User-Agent: {user_agent}, Timestamp: {timestamp}", level=1)
+    debug(f"Headers: {headers}", level=2)
+    debug(f"Body: {body.decode()}", level=2)
+    
     try:
         response = await forward_request(f"/{full_path}", method, headers, body)
-        proxy_end_time = time.time()
         
-        debug(f"Proxy function processing time: {proxy_end_time - proxy_start_time} seconds", level=1)
+        # Log response status code
+        debug(f"Response status code: {response.status_code}", level=1)
         
-        if isinstance(response, StreamingResponse):
-            debug("Returning StreamingResponse", level=1)
-            return response
-        
-        try:
-            content = json.loads(response.body)
-            if 'usage' in content:
-                usage = content['usage']
-                prompt_tokens = usage.get('prompt_tokens', 0)
-                completion_tokens = usage.get('completion_tokens', 0)
-                total_tokens = usage.get('total_tokens', 0)
-                debug(f"Token usage - Prompt: {prompt_tokens}, Completion: {completion_tokens}, Total: {total_tokens}", level=1)
-                try:
-                    await log_token_usage(
-                        request.state.username,
-                        request.client.host,
-                        prompt_tokens,
-                        completion_tokens,
-                        total_tokens
-                    )
-                except Exception as e:
-                    debug(f"Error logging token usage: {str(e)}", level=0)
-                    debug(traceback.format_exc(), level=0)
-            return JSONResponse(content=content, status_code=response.status_code)
-        except json.JSONDecodeError:
-            debug(f"Failed to parse JSON response: {response.body}", level=0)
-            return Response(content=response.body, status_code=response.status_code, headers=dict(response.headers))
+        return response
     except HTTPException as e:
         debug(f"HTTP Exception: {str(e)}", level=0)
-        debug(traceback.format_exc(), level=0)
         return JSONResponse(content={"detail": str(e)}, status_code=e.status_code)
     except Exception as e:
         debug(f"Unexpected error: {str(e)}", level=0)
