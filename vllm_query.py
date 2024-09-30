@@ -7,7 +7,7 @@ import configparser
 import logging
 import asyncio
 import httpx
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import StreamingResponse
 
 # Set up logging
@@ -42,25 +42,35 @@ async def send_query(prompt, model, user_id):
     logger.debug(f"Request data: {json.dumps(data, indent=2)}")
     
     async with httpx.AsyncClient() as client:
-        response = await client.post(f"{VLLM_API_BASE}/chat/completions", headers=headers, json=data, timeout=30)
-        logger.debug(f"Response status code: {response.status_code}")
-        logger.debug(f"Response headers: {response.headers}")
-        logger.debug(f"Full Response content: {response.text}")
+        try:
+            response = await client.post(f"{VLLM_API_BASE}/chat/completions", headers=headers, json=data, timeout=60)
+            logger.debug(f"Response status code: {response.status_code}")
+            logger.debug(f"Response headers: {response.headers}")
+            logger.debug(f"Full Response content: {response.text}")
 
-        response.raise_for_status()
+            response.raise_for_status()
 
-        if response.status_code == 200:
-            result = response.json()
-            logger.info("Query successful")
-            logger.info(f"Full JSON response: {json.dumps(result, indent=2)}")
-            
-            # Add user_id to the response
-            result['user_id'] = user_id
-            
-            return result
-        else:
-            logger.error(f"Unexpected status code: {response.status_code}")
-            return {"error": f"Unexpected status code {response.status_code}"}
+            if response.status_code == 200:
+                result = response.json()
+                logger.info("Query successful")
+                logger.info(f"Full JSON response: {json.dumps(result, indent=2)}")
+                
+                # Add user_id to the response
+                result['user_id'] = user_id
+                
+                return result
+            else:
+                logger.error(f"Unexpected status code: {response.status_code}")
+                return {"error": f"Unexpected status code {response.status_code}"}
+        except httpx.HTTPStatusError as e:
+            logger.error(f"HTTP error occurred: {e}")
+            raise HTTPException(status_code=500, detail=f"HTTP error: {str(e)}")
+        except httpx.RequestError as e:
+            logger.error(f"Request error occurred: {e}")
+            raise HTTPException(status_code=500, detail=f"Request error: {str(e)}")
+        except Exception as e:
+            logger.error(f"An unexpected error occurred: {e}")
+            raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
 
 @app.post("/query")
 async def query(request: Request):
@@ -70,10 +80,16 @@ async def query(request: Request):
     user_id = data.get("user_id", "anonymous")
 
     if not prompt or not model:
-        return {"error": "Missing prompt or model in request"}
+        raise HTTPException(status_code=400, detail="Missing prompt or model in request")
 
-    result = await send_query(prompt, model, user_id)
-    return result
+    try:
+        result = await send_query(prompt, model, user_id)
+        return result
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        logger.error(f"An unexpected error occurred: {e}")
+        raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {str(e)}")
 
 def main():
     logger.info("Starting vLLM Query Application")
@@ -82,7 +98,7 @@ def main():
     
     models = [
         "Qwen/Qwen2.5-72B-Instruct-GPTQ-Int4",
-        "meta-llama/Meta-Llama-3-8B-Instruct"
+        "meta-llama/Meta-Llama-3.1-8B-Instruct"
     ]
     
     while True:
@@ -119,6 +135,12 @@ def main():
         except ValueError:
             logger.warning(f"Invalid input for model choice: {model_choice}")
             print("Invalid input. Please enter a number or 'exit'.")
+        except HTTPException as e:
+            logger.error(f"HTTP error occurred: {e.detail}")
+            print(f"An error occurred: {e.detail}")
+        except Exception as e:
+            logger.error(f"An unexpected error occurred: {e}")
+            print(f"An unexpected error occurred: {str(e)}")
 
 if __name__ == "__main__":
     main()
