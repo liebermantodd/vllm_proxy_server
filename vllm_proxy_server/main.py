@@ -484,6 +484,6 @@ async def proxy(request: Request, full_path: str, api_key: str = Depends(get_api
 
 # Step 8: Run the Proxy Server
 if __name__ == "__main__":
-    shared_state['workers'].value = 1  # Update the number of workers
+    shared_state['workers'].value = 2  # Update the number of workers
     debug(f"Starting server on port {port} with {shared_state['workers'].value} workers", level=1)
     uvicorn.run("main:app", host="0.0.0.0", port=port, workers=shared_state['workers'].value)
