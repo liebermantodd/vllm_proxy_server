@@ -15,7 +15,7 @@ logging.basicConfig(level=logging.ERROR, format='%(asctime)s - %(levelname)s - %
 logger = logging.getLogger(__name__)
 
 # Configuration
-VLLM_API_BASE = "http://wil-vm-42.bluelobster.ai:8000/v1"
+VLLM_API_BASE = "http://wil-vm-42.bluelobster.ai:8000/"
 API_KEY = "toddl:changeMe123!"
 
 # Verbosity level
@@ -29,7 +29,7 @@ app = FastAPI()
 async def get_available_models():
     async with httpx.AsyncClient() as client:
         try:
-            response = await client.get(f"{VLLM_API_BASE.rsplit('/', 1)[0]}/models")
+            response = await client.get(f"{VLLM_API_BASE.rsplit('/', 1)[0]}/v1/models")
             response.raise_for_status()
             return response.json()['models']
         except Exception as e:
@@ -48,42 +48,30 @@ async def send_query(prompt, model, user_id):
     
     data = {
         "model": model,
-        "messages": [
-            {"role": "system", "content": SYSTEM_TEMPLATE},
-            {"role": "user", "content": prompt}
-        ],
-        "max_tokens": 4096
+        "prompt": f"{SYSTEM_TEMPLATE}\n\nUser: {prompt}\n\nAssistant:",
+        # Remove max_tokens if not supported
+        # "max_tokens": 4096
     }
     if VERBOSE_LEVEL > 0:
         logger.debug(f"Request data: {json.dumps(data, indent=2)}")
     
     async with httpx.AsyncClient() as client:
         try:
-            response = await client.post(f"{VLLM_API_BASE}/chat/completions", headers=headers, json=data, timeout=60)
-            if VERBOSE_LEVEL > 0:
-                logger.debug(f"Response status code: {response.status_code}")
-                logger.debug(f"Response headers: {response.headers}")
-                logger.debug(f"Full Response content: {response.text}")
-
+            response = await client.post(f"{VLLM_API_BASE.rsplit('/', 1)[0]}/v1/completions", headers=headers, json=data, timeout=60)
             response.raise_for_status()
 
-            if response.status_code == 200:
-                result = response.json()
-                if VERBOSE_LEVEL > 0:
-                    logger.info("Query successful")
-                    logger.info(f"Full JSON response: {json.dumps(result, indent=2)}")
-                
-                # Add user_id to the response
-                result['user_id'] = user_id
-                
-                return result
-            else:
-                if VERBOSE_LEVEL > 0:
-                    logger.error(f"Unexpected status code: {response.status_code}")
-                return {"error": f"Unexpected status code {response.status_code}"}
+            result = response.json()
+            if VERBOSE_LEVEL > 0:
+                logger.info("Query successful")
+                logger.info(f"Full JSON response: {json.dumps(result, indent=2)}")
+            
+            # Add user_id to the response
+            result['user_id'] = user_id
+            
+            return result
         except httpx.HTTPStatusError as e:
             logger.error(f"HTTP error occurred: {e}")
-            raise HTTPException(status_code=500, detail=f"HTTP error: {str(e)}")
+            raise HTTPException(status_code=e.response.status_code, detail=f"HTTP error: {str(e)}")
         except httpx.RequestError as e:
             logger.error(f"Request error occurred: {e}")
             raise HTTPException(status_code=500, detail=f"Request error: {str(e)}")
@@ -156,9 +144,28 @@ async def main():
             user_id = "test_user"  # In a real application, this would be the authenticated user's ID
             response = await send_query(user_input, selected_model, user_id)
             print("\nAI Response:")
-            print(response['choices'][0]['message']['content'])
-            print(f"\nUsage: {response['usage']}")
+            
+            # Handle different response formats
+            if 'choices' in response:
+                if isinstance(response['choices'], list) and len(response['choices']) > 0:
+                    choice = response['choices'][0]
+                    if 'text' in choice:
+                        print(choice['text'].strip())
+                    elif 'message' in choice and 'content' in choice['message']:
+                        print(choice['message']['content'].strip())
+                    else:
+                        print("Unexpected response format in 'choices'")
+                else:
+                    print("No choices available in the response")
+            elif 'content' in response:
+                print(response['content'].strip())
+            else:
+                print("Unexpected response format")
+            
+            if 'usage' in response:
+                print(f"\nUsage: {response['usage']}")
             print(f"User ID: {response['user_id']}")
+            
             if VERBOSE_LEVEL > 0:
                 print("\nFull JSON response:")
                 print(json.dumps(response, indent=2))
