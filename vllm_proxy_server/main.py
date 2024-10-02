@@ -212,7 +212,9 @@ def create_app():
 
 app = create_app()
 
+@app.get("/models")
 @app.get("/v1/models")
+@app.get("/api/models")
 async def list_models(request: Request):
     debug("Listing models", level=1)
     online_backends = await get_online_backends(request.app.state.config)
@@ -244,6 +246,7 @@ async def list_models(request: Request):
     })
 
 @app.post("/v1/completions")
+@app.post("/v1/chat/completions")
 async def completions(request: Request, api_key: str = Depends(get_api_key)):
     debug("Received completions request", level=1)
     body = await request.json()
@@ -258,31 +261,41 @@ async def completions(request: Request, api_key: str = Depends(get_api_key)):
         raise HTTPException(status_code=404, detail=f"No online backend found for model: {model}")
     
     debug(f"Selected backend: {backend['url']}", level=1)
-    response = await forward_request(backend, "/v1/completions", "POST", request.headers, body)
     
     # Extract username from api_key
     username, _ = api_key.split(':')
     
+    backend_url = f"{backend['url']}{request.url.path}"
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {backend['api_key']}"
+    }
+    
+    async def stream_response():
+        async with httpx.AsyncClient() as client:
+            try:
+                async with client.stream("POST", backend_url, json=body, headers=headers, timeout=60.0) as response:
+                    async for chunk in response.aiter_bytes():
+                        yield chunk
+                        debug(f"Forwarded chunk: {chunk.decode('utf-8')}", level=2)
+            except httpx.RequestError as exc:
+                debug(f"Error forwarding request: {str(exc)}", level=0)
+                raise HTTPException(status_code=500, detail=f"Error forwarding request: {str(exc)}")
+
     # Log the request
     await log_request(
         log_file=request.app.state.log_file,
         username=username,
         ip_address=request.client.host,
-        event='completion',
-        access='granted' if response.status_code < 400 else 'denied',
+        event=request.url.path.strip('/'),
+        access='granted',
         model=model,
-        chat_id=response.json().get('id', 'N/A') if response.status_code < 400 else 'N/A',
+        chat_id='N/A',
         user_agent=request.headers.get("User-Agent")
     )
     
-    if isinstance(response, StreamingResponse):
-        return response
-    
-    try:
-        content = response.json()
-        return JSONResponse(content=content, status_code=response.status_code)
-    except json.JSONDecodeError:
-        return Response(content=response.content, status_code=response.status_code, headers=dict(response.headers))
+    debug("Returning StreamingResponse", level=1)
+    return StreamingResponse(stream_response(), media_type="text/event-stream")
 
 @app.get("/health")
 async def health_check():
