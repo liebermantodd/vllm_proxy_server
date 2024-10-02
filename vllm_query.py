@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 # Configuration
 VLLM_API_BASE = "http://wil-vm-42.bluelobster.ai:8000/"
 API_KEY = "toddl:changeMe123!"
+API_USERNAME, API_KEY = "toddl:changeMe123!".split(':')
 
 # Verbosity level
 VERBOSE_LEVEL = 0  # 0 for default UX, 1 for detailed logging and JSON output
@@ -41,7 +42,7 @@ async def send_query(prompt, model, user_id):
         logger.info(f"Sending query using model: {model}")
     headers = {
         "Content-Type": "application/json",
-        "Authorization": f"Bearer {API_KEY}"
+        "Authorization": f"Bearer {API_USERNAME}:{API_KEY}"
     }
     if VERBOSE_LEVEL > 0:
         logger.debug(f"Request headers: {headers}")
