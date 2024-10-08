@@ -79,3 +79,86 @@ curl -X POST -H "Authorization: Bearer user1:key1" http://localhost:8080/api/gen
 To start the proxy in background with the above created image, you can use either   
 1) docker: `docker run -d --name vllm-proxy-server -p 8080:8080 vllm_proxy_server:latest`
 2) podman: `podman run -d --name vllm-proxy-server -p 8080:8080 vllm_proxy_server:latest`
+
+# Audio Transcription and Summarization Tool
+
+This tool processes audio files, transcribes them, identifies speakers, and provides a summary of the conversation using AI-powered services.
+
+## Features
+
+- Audio transcription with speaker diarization
+- Speaker re-identification (CUSTOMER, DEALERSHIP, OTHER)
+- Conversation summarization
+- Debug mode for detailed logging
+
+## Requirements
+
+- Python 3.6+
+- `curl` command-line tool
+- Required Python packages (install via `pip install -r requirements.txt`):
+  - requests
+  - argparse
+
+## Setup
+
+1. Clone this repository:
+   ```
+   git clone https://github.com/yourusername/audio-transcription-tool.git
+   cd audio-transcription-tool
+   ```
+
+2. Install the required Python packages:
+   ```
+   pip install -r requirements.txt
+   ```
+
+3. Set up the required environment variables:
+   ```
+   export API_KEY=your_api_key_here
+   export ASR_API_KEY=your_asr_api_key_here
+   ```
+   
+   Note: You can add these lines to your `.bashrc` or `.zshrc` file to make them permanent.
+
+## Usage
+
+Basic usage:
+```
+python diarization-vllm.py input_audio_file.wav
+```
+
+Enable debug mode:
+```
+python diarization-vllm.py input_audio_file.wav --debug
+```
+
+Print a specific number of re-identified transcript lines:
+```
+python diarization-vllm.py input_audio_file.wav --num-reidentified-lines 10
+```
+
+## Output
+
+The script will output:
+1. The full transcript of the audio
+2. Re-identified speakers (CUSTOMER_XX, DEALERSHIP_XX, OTHER_XX)
+3. A summary of the conversation
+
+Debug mode will provide additional information about the processing steps.
+
+## Troubleshooting
+
+- If you encounter any "API key not set" errors, make sure you've correctly set up the environment variables.
+- For any other issues, check the debug output for more detailed error messages.
+
+## License
+
+[Your chosen license]
+
+## Contributing
+
+[Your contribution guidelines]
+
+## Contact
+
+[Your contact information]
