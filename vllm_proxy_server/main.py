@@ -344,7 +344,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="VLLM Proxy Server")
     parser.add_argument("--config", default="config.ini", help="Path to the configuration file")
     parser.add_argument("--port", type=int, help="Port to run the server on")
-    parser.add_argument("--workers", type=int, help="Number of worker processes")
     parser.add_argument("--api-keys-file", help="Path to the API keys file")
     parser.add_argument("--log-file", help="Path to the log file")
     parser.add_argument("--debug", type=int, choices=[0, 1, 2], default=2, help="Debug level: 0 (errors only), 1 (verbose), 2 (JSON)")
@@ -357,11 +356,10 @@ if __name__ == "__main__":
 
     config = load_config(os.environ['CONFIG_FILE'])
     port = args.port or config.getint('Server', 'port', fallback=8000)
-    workers = args.workers or config.getint('Server', 'workers', fallback=1)
 
-    debug(f"Starting server on port {port} with {workers} workers", level=1)
+    debug(f"Starting server on port {port}", level=1)
     debug(f"Using config file: {os.environ['CONFIG_FILE']}", level=1)
     debug(f"Using API keys file: {os.environ['API_KEYS_FILE']}", level=1)
     debug(f"Using log file: {os.environ['LOG_FILE']}", level=1)
 
-    uvicorn.run("main:app", host="0.0.0.0", port=port, workers=workers)
+    uvicorn.run(app, host="0.0.0.0", port=port)
