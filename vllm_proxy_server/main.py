@@ -24,7 +24,7 @@ logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %
 logger = logging.getLogger(__name__)
 
 # Debug levels
-DEBUG_LEVEL = int(os.getenv('DEBUG_LEVEL', '2'))  # Default to maximum verbosity
+DEBUG_LEVEL = int(os.getenv('DEBUG_LEVEL', '0'))  # Default to maximum verbosity
 
 def debug(message, level=1, json_data=None):
     if DEBUG_LEVEL >= level:
